@@ -9,7 +9,7 @@ import random
 import time
 from typing import Optional, List, Tuple
 from stockpick import get_random_stock_info
-import alpaca_trade_api as tradeapi
+import yfinance as yf
 
 load_dotenv("secret.env")
 
@@ -20,11 +20,6 @@ log = ('log.csv')
 
 token = os.getenv("DISCORD_TOKEN")
 
-#aplalca setup 
-alpaca_api_key = os.getenv("ALPACA_API_KEY")
-alpaca_api_secret = os.getenv("ALPACA_API_SECRET")
-alpalca_base_url = 'https://paper-api.alpaca.markets'
-api = tradeapi.REST(alpaca_api_key, alpaca_api_secret, alpalca_base_url)
 INVESTMENT_AMOUNT=500
 
 #intializing
@@ -43,16 +38,13 @@ async def on_ready():
 def buy_stock(ticker, amount):
     try:
         ticker_symbol = ticker.split()[0]
+        stock = yf.Ticker(ticker_symbol)
+        stock_price = stock.history(period='1d')['Close'][0]
+        shares_to_buy = amount // stock_price
 
-        order = api.submit_order(
-            symbol = ticker_symbol,
-            qty = None,
-            notional=amount,
-            side='buy',
-            type='market',
-            time_in_force='day'
-        )
-        return True, f"Bought {amount} of {ticker_symbol} (Order ID: {order.id})"
+        # Simulate buying stocks
+        print(f"Bought {shares_to_buy} shares of {ticker_symbol} at ${stock_price} each for a total of ${amount}")
+        return True, f"Bought {shares_to_buy} shares of {ticker_symbol} at ${stock_price} each for a total of ${amount}"
     except Exception as e:
         return False, f"failed to buy{ticker}: {str(e)}"
 
