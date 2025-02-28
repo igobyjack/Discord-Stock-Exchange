@@ -9,13 +9,9 @@ import random
 import time
 from typing import Optional, List, Tuple
 from stockpick import get_random_stock_info
+import alpaca_trade_api as tradeapi
 
 load_dotenv("secret.env")
-#placeholders
-#replace these with stock market api implementation
-
-option1 = 'option1'
-option2 = 'option2'
 
 #poll duration; 1 hour
 duration = 30
@@ -23,6 +19,14 @@ duration = 30
 log = ('log.csv')
 
 token = os.getenv("DISCORD_TOKEN")
+
+#aplalca setup 
+alpaca_api_key = os.getenv("ALPACA_API_KEY")
+alpaca_api_secret = os.getenv("ALPACA_API_SECRET")
+alpalca_base_url = 'https://paper-api.alpaca.markets'
+api = tradeapi.REST(alpaca_api_key, alpaca_api_secret, alpalca_base_url)
+INVESTMENT_AMOUNT=500
+
 #intializing
 intents = discord.Intents.all()
 intents.members = True
@@ -34,6 +38,23 @@ async def on_ready():
     print('Bot updated and ready for use')
     print('-----------------------------')
 
+
+
+def buy_stock(ticker, amount):
+    try:
+        ticker_symbol = ticker.split()[0]
+
+        order = api.submit_order(
+            symbol = ticker_symbol,
+            qty = None,
+            notional=amount,
+            side='buy',
+            type='market',
+            time_in_force='day'
+        )
+        return True, f"Bought {amount} of {ticker_symbol} (Order ID: {order.id})"
+    except Exception as e:
+        return False, f"failed to buy{ticker}: {str(e)}"
 
 @bot.tree.command(name="bottest", description="Tests if the bot is functional")
 async def bottest(interaction: discord.Interaction):
@@ -92,6 +113,10 @@ async def count_votes(interaction: discord.Interaction, message_id, option1, opt
     
     await channel.send(f"Stock pick winner:\n{winner}")
 
+    if winner != 'Tie':
+        success, message = buy_stock(winner, INVESTMENT_AMOUNT)
+        await channel.send(f"Paper Trading: {message}")
+
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
     if not os.path.isfile(log):
         df = pd.DataFrame(columns=['Timestamp', 'Winner'])
@@ -102,6 +127,8 @@ async def count_votes(interaction: discord.Interaction, message_id, option1, opt
         'Winner': [winner]
     })
     new_data.to_csv(log, mode='a', header=False, index=False)
+
+
 
 
 bot.run(token)

@@ -3,28 +3,36 @@ import pandas as pd
 import yfinance as yf
 
 def get_sp500_stocks():
-    """Get the list of S&P 500 stock tickers from Wikipedia."""
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
     tables = pd.read_html(url)
     sp500_table = tables[0]
     return sp500_table['Symbol'].tolist()
 
+def get_nasdaq100_stocks():
+    url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
+    tables = pd.read_html(url)
+    
+    possible_columns = ['Ticker', 'Symbol', 'Ticker symbol', 'Stock symbol']
+    
+    for table in tables:
+        for col in possible_columns:
+            if col in table.columns:
+                return table[col].tolist()
+    
+    raise ValueError("Could not find NASDAQ-100 stock tickers in Wikipedia tables")
+
 def get_random_stock_info():
-    """Pick a random stock from S&P 500 and return its information."""
     try:
-        # Get S&P 500 stocks
-        sp500_stocks = get_sp500_stocks()
+        nasdaq_stocks = get_nasdaq100_stocks()
         
-        # Pick a random stock ticker
-        random_ticker = random.choice(sp500_stocks)
+        random_ticker = random.choice(nasdaq_stocks)
         
-        # Get stock information using yfinance
         stock = yf.Ticker(random_ticker)
         stock_info = stock.info
         
-        # Extract relevant information
         info = {
-            'Name': stock_info.get('shortName', 'N/A'),
+            'Name': f"{random_ticker} - {stock_info.get('shortName', 'N/A')}",
+            'Symbol': random_ticker
         }
         
         return info
@@ -34,10 +42,8 @@ def get_random_stock_info():
         return None
 
 if __name__ == "__main__":
-    print("Picking a random S&P 500 stock...")
     stock_info = get_random_stock_info()
     
     if stock_info:
-        print("\nRandom Stock Information:")
         for key, value in stock_info.items():
             print(f"{key}: {value}")
