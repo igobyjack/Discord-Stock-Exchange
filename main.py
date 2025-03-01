@@ -9,23 +9,15 @@ import random
 import time
 from typing import Optional, List, Tuple
 from stockpick import get_random_stock_info
-import alpaca_trade_api as tradeapi
+import yfinance as yf
+from portfolio import buy_stock
 
 load_dotenv("secret.env")
 
 #poll duration; 1 hour
 duration = 30
 
-log = ('log.csv')
-
 token = os.getenv("DISCORD_TOKEN")
-
-#aplalca setup 
-alpaca_api_key = os.getenv("ALPACA_API_KEY")
-alpaca_api_secret = os.getenv("ALPACA_API_SECRET")
-alpalca_base_url = 'https://paper-api.alpaca.markets'
-api = tradeapi.REST(alpaca_api_key, alpaca_api_secret, alpalca_base_url)
-INVESTMENT_AMOUNT=500
 
 #intializing
 intents = discord.Intents.all()
@@ -35,26 +27,11 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 #ready command
 @bot.event
 async def on_ready():
+    from portfolio import initialize_balance
     print('Bot updated and ready for use')
+    initialize_balance()  # Initialize the balance
     print('-----------------------------')
 
-
-
-def buy_stock(ticker, amount):
-    try:
-        ticker_symbol = ticker.split()[0]
-
-        order = api.submit_order(
-            symbol = ticker_symbol,
-            qty = None,
-            notional=amount,
-            side='buy',
-            type='market',
-            time_in_force='day'
-        )
-        return True, f"Bought {amount} of {ticker_symbol} (Order ID: {order.id})"
-    except Exception as e:
-        return False, f"failed to buy{ticker}: {str(e)}"
 
 @bot.tree.command(name="bottest", description="Tests if the bot is functional")
 async def bottest(interaction: discord.Interaction):
@@ -114,21 +91,51 @@ async def count_votes(interaction: discord.Interaction, message_id, option1, opt
     await channel.send(f"Stock pick winner:\n{winner}")
 
     if winner != 'Tie':
-        success, message = buy_stock(winner, INVESTMENT_AMOUNT)
-        await channel.send(f"Paper Trading: {message}")
+        success, message = buy_stock(winner, shares=1)
+        await channel.send(f"{message}")
 
-    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    if not os.path.isfile(log):
-        df = pd.DataFrame(columns=['Timestamp', 'Winner'])
-        df.to_csv(log, index=False)
+@bot.tree.command(name="portfolio", description="View current portfolio status")
+async def portfolio_cmd(interaction: discord.Interaction):
+    from portfolio import get_portfolio_value, initialize_balance
     
-    new_data = pd.DataFrame({
-        'Timestamp': [timestamp],
-        'Winner': [winner]
-    })
-    new_data.to_csv(log, mode='a', header=False, index=False)
-
-
-
+    # Initialize balance if needed
+    initialize_balance()
+    
+    # Get portfolio data
+    portfolio_data = get_portfolio_value()
+    
+    embed = discord.Embed(
+        title="Portfolio Status",
+        description="Current portfolio value and holdings",
+        color=discord.Color.green()
+    )
+    
+    embed.add_field(name="Cash Balance", value=f"${portfolio_data['cash']:.2f}", inline=False)
+    embed.add_field(name="Stock Value", value=f"${portfolio_data['stocks']:.2f}", inline=False)
+    embed.add_field(name="Total Value", value=f"${portfolio_data['total']:.2f}", inline=False)
+    
+    # Add individual stock holdings if portfolio.csv exists
+    if os.path.exists('portfolio.csv'):
+        df = pd.read_csv('portfolio.csv')
+        if not df.empty:
+            holdings = df.groupby('Ticker').agg({
+                'Name': 'first',
+                'Shares': 'sum'
+            })
+            
+            stocks_text = ""
+            for ticker, row in holdings.iterrows():
+                try:
+                    stock = yf.Ticker(ticker)
+                    current_price = stock.history(period='1d')['Close'][0]
+                    value = row['Shares'] * current_price
+                    stocks_text += f"**{ticker}** ({row['Name']}): {row['Shares']} shares - ${value:.2f}\n"
+                except:
+                    stocks_text += f"**{ticker}** ({row['Name']}): {row['Shares']} shares\n"
+            
+            if stocks_text:
+                embed.add_field(name="Holdings", value=stocks_text, inline=False)
+    
+    await interaction.response.send_message(embed=embed)
 
 bot.run(token)

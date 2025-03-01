@@ -2,12 +2,6 @@ import random
 import pandas as pd
 import yfinance as yf
 
-def get_sp500_stocks():
-    url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-    tables = pd.read_html(url)
-    sp500_table = tables[0]
-    return sp500_table['Symbol'].tolist()
-
 def get_nasdaq100_stocks():
     url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
     tables = pd.read_html(url)
