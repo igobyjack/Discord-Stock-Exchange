@@ -30,6 +30,14 @@ async def on_ready():
     from portfolio import initialize_balance
     print('Bot updated and ready for use')
     initialize_balance()  # Initialize the balance
+    
+    # Sync all slash commands with Discord
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
+        
     print('-----------------------------')
 
 
@@ -135,6 +143,37 @@ async def portfolio_cmd(interaction: discord.Interaction):
             
             if stocks_text:
                 embed.add_field(name="Holdings", value=stocks_text, inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="value", description="Get the current portfolio value")
+async def value_cmd(interaction: discord.Interaction):
+    from portfolio import get_portfolio_value, initialize_balance
+    
+    # Initialize balance if needed
+    initialize_balance()
+    
+    # Get portfolio data
+    portfolio_data = get_portfolio_value()
+    
+    # Calculate the profit/loss
+    profit_loss = portfolio_data['total'] - 50000  # 50000 is the initial balance
+    profit_loss_percent = (profit_loss / 50000) * 100
+    
+    # Determine if it's profit or loss
+    if profit_loss >= 0:
+        status = f"📈 Profit: +${profit_loss:.2f} (+{profit_loss_percent:.2f}%)"
+        color = discord.Color.green()
+    else:
+        status = f"📉 Loss: -${abs(profit_loss):.2f} ({profit_loss_percent:.2f}%)"
+        color = discord.Color.red()
+    
+    # Create a simple embed
+    embed = discord.Embed(
+        title="Portfolio Value",
+        description=f"**${portfolio_data['total']:.2f}**\n{status}",
+        color=color
+    )
     
     await interaction.response.send_message(embed=embed)
 
