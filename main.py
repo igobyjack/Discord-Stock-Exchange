@@ -12,7 +12,7 @@ from stockpick import get_random_stock_info
 import yfinance as yf
 from portfolio import buy_stock
 
-load_dotenv("secret.env")
+load_dotenv("token.env")
 
 #poll duration; 1 hour
 duration = 30
