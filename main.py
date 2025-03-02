@@ -11,12 +11,12 @@ import time
 from typing import Optional, List, Tuple
 from stockpick import get_random_stock_info
 import yfinance as yf
-from portfolio import buy_stock
+from portfolio import buy_stock, sell_stock
 
 load_dotenv("token.env")
 
 # poll duration; 1 hour
-duration = 3600
+duration = 30
 
 token = os.getenv("DISCORD_TOKEN")
 
@@ -64,7 +64,7 @@ async def create_poll(channel):
     option2 = stock2['Name']
     
     embed = discord.Embed(
-        title="Next stock pick (Automated 9 PM Poll)", 
+        title="Next stock pick", 
         description=f"{emoji1}  {option1}\n\n{emoji2}  {option2}",
         color=discord.Color.blue()
     )
@@ -96,20 +96,21 @@ async def count_votes_auto(channel, message_id, option1, option2):
     else:
         winner = 'Tie'
     
-    await channel.send(f"Stock pick winner:\n{winner}")
 
     if winner != 'Tie':
+        await channel.send(f"Stock pick winner:\n{winner}")
         success, message_text = buy_stock(winner, shares=1)
         await channel.send(f"{message_text}")
+    else:
+        await channel.send("Tie, no stock picked")
 
-# Scheduler task to check time and trigger poll at 9 PM
 @tasks.loop(minutes=1.0)
 async def auto_poll_scheduler():
     now = datetime.datetime.now()
     
     # Check if it's 9 PM (21:00)
-    if now.hour == 10 and now.minute == 30:
-        print("Triggering automatic 9 PM poll")
+    if now.hour == 21 and now.minute == 0:
+        print("Triggering automatic poll")
         channel = bot.get_channel(AUTO_POLL_CHANNEL_ID)
         if channel:
             await create_poll(channel)
@@ -127,61 +128,6 @@ async def bottest(interaction: discord.Interaction):
     await interaction.response.send_message("bot functional: tests passed")
     print('Test complete')
 
-# @bot.tree.command(name="poll", description="Start a poll")
-# async def poll(interaction: discord.Interaction):
-#     emoji1 = '1️⃣'
-#     emoji2 = '2️⃣'
-    
-#     # Get two different random stocks
-#     stock1 = get_random_stock_info()
-#     stock2 = get_random_stock_info()
-    
-#     # Make sure we get two different stocks
-#     while stock2['Name'] == stock1['Name']:
-#         stock2 = get_random_stock_info()
-    
-#     option1 = stock1['Name']
-#     option2 = stock2['Name']
-    
-#     embed = discord.Embed(
-#         title="Next stock pick", 
-#         description=f"{emoji1}  {option1}\n\n{emoji2}  {option2}",
-#         color=discord.Color.blue()
-#     )
-    
-#     await interaction.response.send_message(embed=embed)
-    
-#     poll_message = await interaction.original_response()
-#     await poll_message.add_reaction(emoji1)
-#     await poll_message.add_reaction(emoji2)
-    
-#     bot.loop.create_task(count_votes(interaction, poll_message.id, option1, option2))
-
-# async def count_votes(interaction: discord.Interaction, message_id, option1, option2):
-#     await asyncio.sleep(duration)
-#     channel = interaction.channel
-#     message = await channel.fetch_message(message_id)
-#     count1 = 0
-#     count2 = 0
-#     # ignore bot's own reactions
-#     for reaction in message.reactions:
-#         if str(reaction.emoji) == '1️⃣':
-#             count1 = reaction.count - 1
-#         elif str(reaction.emoji) == '2️⃣':
-#             count2 = reaction.count - 1
-    
-#     if count1 > count2:
-#         winner = option1
-#     elif count2 > count1:
-#         winner = option2
-#     else:
-#         winner = 'Tie'
-    
-#     await channel.send(f"Stock pick winner:\n{winner}")
-
-#     if winner != 'Tie':
-#         success, message = buy_stock(winner, shares=1)
-#         await channel.send(f"{message}")
 
 @bot.tree.command(name="portfolio", description="View current portfolio status")
 async def portfolio_cmd(interaction: discord.Interaction):
@@ -257,5 +203,88 @@ async def value_cmd(interaction: discord.Interaction):
     )
     
     await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="sellpoll", description="Start a poll to decide which stock to sell")
+async def sellpoll(interaction: discord.Interaction):
+    
+    # Check if we have stocks in portfolio
+    if not os.path.exists('portfolio.csv'):
+        await interaction.response.send_message("No stocks in portfolio to sell.")
+        return
+    
+    df = pd.read_csv('portfolio.csv')
+    if df.empty:
+        await interaction.response.send_message("No stocks in portfolio to sell.")
+        return
+    
+    # Group by ticker to get unique stocks
+    holdings = df.groupby('Ticker').agg({
+        'Name': 'first',
+        'Shares': 'sum'
+    })
+    
+    # Need at least 2 different stocks for a poll
+    if len(holdings) < 2:
+        await interaction.response.send_message(f"Need at least 2 different stocks for a poll. You only have {len(holdings)}.")
+        return
+    
+    # Select 2 random stocks from portfolio
+    selected_tickers = random.sample(list(holdings.index), 2)
+    
+    # Set up poll options
+    emoji1 = '1️⃣'
+    emoji2 = '2️⃣'
+    
+    option1 = f"{selected_tickers[0]} ({holdings.loc[selected_tickers[0]]['Name']})"
+    option2 = f"{selected_tickers[1]} ({holdings.loc[selected_tickers[1]]['Name']})"
+    
+    embed = discord.Embed(
+        title="Which stock should we sell?", 
+        description=f"{emoji1}  {option1}\n\n{emoji2}  {option2}",
+        color=discord.Color.red()
+    )
+    
+    # Send the poll message
+    poll_message = await interaction.channel.send(embed=embed)
+    
+    # Acknowledge the interaction
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send("Sell poll created!", ephemeral=True)
+    
+    # Add reactions for voting
+    await poll_message.add_reaction(emoji1)
+    await poll_message.add_reaction(emoji2)
+    
+    # Schedule vote counting
+    bot.loop.create_task(count_sell_votes(interaction.channel, poll_message.id, selected_tickers[0], selected_tickers[1]))
+
+# Count votes for sell polls
+async def count_sell_votes(channel, message_id, option1, option2):
+    await asyncio.sleep(duration)
+    message = await channel.fetch_message(message_id)
+    count1 = 0
+    count2 = 0
+    
+    # Count votes (ignore bot's own reactions)
+    for reaction in message.reactions:
+        if str(reaction.emoji) == '1️⃣':
+            count1 = reaction.count - 1
+        elif str(reaction.emoji) == '2️⃣':
+            count2 = reaction.count - 1
+    
+    # Determine winner
+    if count1 > count2:
+        winner = option1
+    elif count2 > count1:
+        winner = option2
+    else:
+        winner = 'Tie'
+    
+    if winner != 'Tie':
+        await channel.send(f"Stock to sell:\n{winner}")
+        success, message_text = sell_stock(winner, shares=1)
+        await channel.send(f"{message_text}")
+    else:
+        await channel.send("Tie, no stock sold")
 
 bot.run(token)

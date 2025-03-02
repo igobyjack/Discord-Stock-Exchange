@@ -11,8 +11,8 @@ balance_file = 'balance.csv'
 INITIAL_BALANCE = 50000
 
 def initialize_balance():
-    """Initialize the balance file if it doesn't exist"""
-    if not os.path.isfile(balance_file):
+    """Initialize the balance file if it doesn't exist or is empty"""
+    if not os.path.isfile(balance_file) or os.path.getsize(balance_file) == 0:
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         df = pd.DataFrame({
             'Timestamp': [timestamp],
@@ -22,6 +22,7 @@ def initialize_balance():
         })
         df.to_csv(balance_file, index=False)
         return INITIAL_BALANCE
+    # If file exists and is non-empty, return the current balance.
     return get_balance()
 
 def get_balance():
@@ -129,3 +130,98 @@ def buy_stock(ticker, amount=None, shares=None):
     except Exception as e:
         return False, f"Failed to buy {ticker}: {str(e)}"
 
+def sell_stock(ticker, amount=None, shares=None):
+    """Sell stock from portfolio and update cash balance
+    
+    Args:
+        ticker (str): Stock ticker symbol
+        amount (float, optional): Dollar amount to sell
+        shares (int, optional): Number of shares to sell
+        
+    Returns:
+        tuple: (success, message)
+    """
+    try:
+        ticker_symbol = ticker.split()[0]
+        
+        # Check if we have this stock in portfolio
+        if not os.path.isfile(portfolio_file):
+            return False, f"No portfolio exists to sell {ticker_symbol} from"
+        
+        df = pd.read_csv(portfolio_file)
+        if df.empty:
+            return False, f"Empty portfolio, no {ticker_symbol} shares to sell"
+        
+        # Get total shares owned
+        portfolio_stock = df[df['Ticker'] == ticker_symbol]
+        if portfolio_stock.empty:
+            return False, f"You don't own any shares of {ticker_symbol}"
+            
+        total_shares_owned = portfolio_stock['Shares'].sum()
+        
+        # Get current market price
+        stock = yf.Ticker(ticker_symbol)
+        stock_price = stock.history(period='1d')['Close'][0]
+        stock_info = stock.info
+        company_name = stock_info.get('longName', ticker_symbol)
+        
+        # Determine shares to sell and sale value
+        if shares is not None:
+            shares_to_sell = shares
+            if shares_to_sell > total_shares_owned:
+                return False, f"You only have {total_shares_owned} shares of {company_name}, cannot sell {shares_to_sell}"
+            sale_value = shares_to_sell * stock_price
+        else:
+            # If amount specified, convert to shares (limited by owned shares)
+            max_sale_value = total_shares_owned * stock_price
+            if amount > max_sale_value:
+                shares_to_sell = total_shares_owned
+                sale_value = max_sale_value
+            else:
+                shares_to_sell = amount // stock_price
+                sale_value = shares_to_sell * stock_price
+        
+        # Update portfolio: reduce shares owned
+        # We'll subtract from the most recent purchases first (LIFO)
+        # Create a new DataFrame without the sold shares
+        shares_left_to_sell = shares_to_sell
+        new_portfolio = []
+        
+        # Process in reverse order (most recent first)
+        for idx, row in df.iloc[::-1].iterrows():
+            if row['Ticker'] == ticker_symbol and shares_left_to_sell > 0:
+                # This row contains shares we want to sell
+                if row['Shares'] <= shares_left_to_sell:
+                    # Sell all shares in this row
+                    shares_left_to_sell -= row['Shares']
+                else:
+                    # Sell only part of the shares in this row
+                    new_shares = row['Shares'] - shares_left_to_sell
+                    row_copy = row.copy()
+                    row_copy['Shares'] = new_shares
+                    new_portfolio.append(row_copy)
+                    shares_left_to_sell = 0
+            else:
+                # Keep this row unchanged
+                new_portfolio.append(row)
+        
+        # Convert back to DataFrame and save
+        if new_portfolio:
+            new_df = pd.DataFrame(new_portfolio)
+            # Sort by original order (earliest first)
+            new_df = new_df.iloc[::-1]
+            new_df.to_csv(portfolio_file, index=False)
+        else:
+            # Portfolio is now empty, create empty file with headers
+            pd.DataFrame(columns=['Timestamp', 'Ticker', 'Name', 'Shares', 'Price', 'Total']).to_csv(portfolio_file, index=False)
+        
+        # Update cash balance (negative amount means adding money)
+        update_balance(-sale_value, f"Sell {ticker_symbol}")
+        
+        # Get the updated balance
+        new_balance = get_balance()
+        
+        return True, f"Sold {shares_to_sell} shares of {company_name} ({ticker_symbol}) at ${stock_price:.2f} each for ${sale_value:.2f}. New balance: ${new_balance:.2f}"
+            
+    except Exception as e:
+        return False, f"Failed to sell {ticker}: {str(e)}"
